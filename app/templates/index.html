@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Football Predictor</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <div>
+        <h1>Football Predictor</h1>
+        <p>Predicciones con ELO, forma reciente y XGBoost. Selecciona una liga y dos equipos.</p>
+      </div>
+      <div class="controls">
+        <label for="league">Liga</label>
+        <select id="league">
+          {% for league in leagues %}
+          <option value="{{ league.key }}">{{ league.name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+    </header>
+
+    <section class="tabs">
+      <button class="tab active" data-tab="predict">Prediccion</button>
+      <button class="tab" data-tab="compare">Comparar modelos</button>
+    </section>
+
+    <section class="grid" id="tab-predict">
+      <div class="card">
+        <h2>Tabla de Clasificacion</h2>
+        <div id="standings-meta" class="meta">Datos obtenidos desde TheSportsDB</div>
+        <div class="table-wrap">
+          <table id="standings">
+            <thead>
+              <tr>
+                <th>Pos</th>
+                <th>Equipo</th>
+                <th>PJ</th>
+                <th>GF</th>
+                <th>GC</th>
+                <th>DG</th>
+                <th>Pts</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Prediccion</h2>
+        <div class="form">
+          <label for="model">Modelo</label>
+          <select id="model"></select>
+
+          <label for="home">Equipo Local</label>
+          <select id="home"></select>
+
+          <label for="away">Equipo Visitante</label>
+          <select id="away"></select>
+
+          <button id="predict">Predecir</button>
+        </div>
+
+        <div id="prediction" class="prediction hidden">
+          <h3>Resultado</h3>
+          <div class="label" id="pred-label"></div>
+          <div class="probs" id="pred-probs"></div>
+          <div class="meta" id="pred-metrics"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid hidden" id="tab-compare">
+      <div class="card">
+        <h2>Comparar modelos</h2>
+        <div class="form">
+          <label for="model-a">Modelo A</label>
+          <select id="model-a"></select>
+
+          <label for="model-b">Modelo B</label>
+          <select id="model-b"></select>
+
+          <label for="home-compare">Equipo Local</label>
+          <select id="home-compare"></select>
+
+          <label for="away-compare">Equipo Visitante</label>
+          <select id="away-compare"></select>
+
+          <button id="compare">Comparar</button>
+        </div>
+
+        <div id="compare-results" class="compare hidden">
+          <div class="compare-col">
+            <h3 id="compare-model-a"></h3>
+            <div class="label" id="compare-label-a"></div>
+            <div class="probs" id="compare-probs-a"></div>
+            <div class="meta" id="compare-metrics-a"></div>
+          </div>
+          <div class="compare-col">
+            <h3 id="compare-model-b"></h3>
+            <div class="label" id="compare-label-b"></div>
+            <div class="probs" id="compare-probs-b"></div>
+            <div class="meta" id="compare-metrics-b"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const leagueSelect = document.getElementById("league");
+    const standingsBody = document.querySelector("#standings tbody");
+    const homeSelect = document.getElementById("home");
+    const awaySelect = document.getElementById("away");
+    const modelSelect = document.getElementById("model");
+    const modelASelect = document.getElementById("model-a");
+    const modelBSelect = document.getElementById("model-b");
+    const homeCompare = document.getElementById("home-compare");
+    const awayCompare = document.getElementById("away-compare");
+    const predictBtn = document.getElementById("predict");
+    const compareBtn = document.getElementById("compare");
+    const predictionBox = document.getElementById("prediction");
+    const predLabel = document.getElementById("pred-label");
+    const predProbs = document.getElementById("pred-probs");
+    const predMetrics = document.getElementById("pred-metrics");
+    const compareBox = document.getElementById("compare-results");
+    const compareModelA = document.getElementById("compare-model-a");
+    const compareModelB = document.getElementById("compare-model-b");
+    const compareLabelA = document.getElementById("compare-label-a");
+    const compareLabelB = document.getElementById("compare-label-b");
+    const compareProbsA = document.getElementById("compare-probs-a");
+    const compareProbsB = document.getElementById("compare-probs-b");
+    const compareMetricsA = document.getElementById("compare-metrics-a");
+    const compareMetricsB = document.getElementById("compare-metrics-b");
+
+    async function loadStandings(league) {
+      standingsBody.innerHTML = "<tr><td colspan='7'>Cargando...</td></tr>";
+      const res = await fetch(`/api/standings/${league}`);
+      if (!res.ok) {
+        standingsBody.innerHTML = "<tr><td colspan='7'>Sin datos disponibles.</td></tr>";
+        return;
+      }
+      const data = await res.json();
+      standingsBody.innerHTML = data.rows.map(r => `
+        <tr>
+          <td>${r.pos}</td>
+          <td>${r.team}</td>
+          <td>${r.pj}</td>
+          <td>${r.gf}</td>
+          <td>${r.ga}</td>
+          <td>${r.dg}</td>
+          <td>${r.pts}</td>
+        </tr>
+      `).join("");
+    }
+
+    async function loadTeams(league) {
+      homeSelect.innerHTML = "";
+      awaySelect.innerHTML = "";
+      homeCompare.innerHTML = "";
+      awayCompare.innerHTML = "";
+      const res = await fetch(`/api/teams/${league}`);
+      if (!res.ok) {
+        return;
+      }
+      const data = await res.json();
+      data.teams.forEach(team => {
+        const opt1 = document.createElement("option");
+        opt1.value = team;
+        opt1.textContent = team;
+        homeSelect.appendChild(opt1);
+        const opt2 = document.createElement("option");
+        opt2.value = team;
+        opt2.textContent = team;
+        awaySelect.appendChild(opt2);
+        const opt3 = document.createElement("option");
+        opt3.value = team;
+        opt3.textContent = team;
+        homeCompare.appendChild(opt3);
+        const opt4 = document.createElement("option");
+        opt4.value = team;
+        opt4.textContent = team;
+        awayCompare.appendChild(opt4);
+      });
+      if (data.teams.length >= 2) {
+        awaySelect.selectedIndex = 1;
+        awayCompare.selectedIndex = 1;
+      }
+    }
+
+    async function loadModels() {
+      const res = await fetch("/api/models");
+      if (!res.ok) {
+        return;
+      }
+      const data = await res.json();
+      const models = data.models || [];
+      modelSelect.innerHTML = "";
+      modelASelect.innerHTML = "";
+      modelBSelect.innerHTML = "";
+      models.forEach((m, idx) => {
+        const opt = document.createElement("option");
+        opt.value = m;
+        opt.textContent = m;
+        modelSelect.appendChild(opt);
+        const optA = document.createElement("option");
+        optA.value = m;
+        optA.textContent = m;
+        modelASelect.appendChild(optA);
+        const optB = document.createElement("option");
+        optB.value = m;
+        optB.textContent = m;
+        modelBSelect.appendChild(optB);
+      });
+      if (models.length >= 2) {
+        modelBSelect.selectedIndex = 1;
+      }
+    }
+
+    async function predict() {
+      const league = leagueSelect.value;
+      const home_team = homeSelect.value;
+      const away_team = awaySelect.value;
+      const model = modelSelect.value || "xgboost";
+
+      const res = await fetch("/api/predict", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ league, home_team, away_team, model })
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        predLabel.textContent = err.detail || "Error";
+        predProbs.innerHTML = "";
+        predMetrics.textContent = "";
+        predictionBox.classList.remove("hidden");
+        return;
+      }
+
+      const data = await res.json();
+      predictionBox.classList.remove("hidden");
+      predLabel.textContent = data.label === "H" ? "Gana Local" : data.label === "A" ? "Gana Visitante" : "Empate";
+      predProbs.innerHTML = Object.entries(data.probabilities)
+        .map(([k, v]) => {
+          const label = k === "H" ? "Local" : k === "A" ? "Visitante" : "Empate";
+          return `<div>${label}: ${(v * 100).toFixed(1)}%</div>`;
+        }).join("");
+
+      const acceptance = data.acceptance_percent !== null && data.acceptance_percent !== undefined
+        ? `Aceptacion del modelo: ${data.acceptance_percent.toFixed(1)}%`
+        : "";
+      const extra = data.metrics
+        ? ` | LogLoss: ${data.metrics.log_loss.toFixed(4)}`
+        : "";
+      predMetrics.textContent = acceptance + extra;
+    }
+
+    async function compareModels() {
+      const league = leagueSelect.value;
+      const home_team = homeCompare.value;
+      const away_team = awayCompare.value;
+      const model_a = modelASelect.value;
+      const model_b = modelBSelect.value;
+
+      const res = await fetch("/api/predict-compare", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ league, home_team, away_team, model_a, model_b })
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        compareLabelA.textContent = err.detail || "Error";
+        compareLabelB.textContent = "";
+        compareProbsA.innerHTML = "";
+        compareProbsB.innerHTML = "";
+        compareMetricsA.textContent = "";
+        compareMetricsB.textContent = "";
+        compareBox.classList.remove("hidden");
+        return;
+      }
+
+      const data = await res.json();
+      compareBox.classList.remove("hidden");
+      const [a, b] = data.predictions;
+
+      compareModelA.textContent = a.model;
+      compareModelB.textContent = b.model;
+      compareLabelA.textContent = a.label === "H" ? "Gana Local" : a.label === "A" ? "Gana Visitante" : "Empate";
+      compareLabelB.textContent = b.label === "H" ? "Gana Local" : b.label === "A" ? "Gana Visitante" : "Empate";
+      compareProbsA.innerHTML = Object.entries(a.probabilities)
+        .map(([k, v]) => {
+          const label = k === "H" ? "Local" : k === "A" ? "Visitante" : "Empate";
+          return `<div>${label}: ${(v * 100).toFixed(1)}%</div>`;
+        }).join("");
+      compareProbsB.innerHTML = Object.entries(b.probabilities)
+        .map(([k, v]) => {
+          const label = k === "H" ? "Local" : k === "A" ? "Visitante" : "Empate";
+          return `<div>${label}: ${(v * 100).toFixed(1)}%</div>`;
+        }).join("");
+
+      const accA = a.acceptance_percent !== null && a.acceptance_percent !== undefined
+        ? `Aceptacion: ${a.acceptance_percent.toFixed(1)}%`
+        : "";
+      const accB = b.acceptance_percent !== null && b.acceptance_percent !== undefined
+        ? `Aceptacion: ${b.acceptance_percent.toFixed(1)}%`
+        : "";
+      const extraA = a.metrics ? ` | LogLoss: ${a.metrics.log_loss.toFixed(4)}` : "";
+      const extraB = b.metrics ? ` | LogLoss: ${b.metrics.log_loss.toFixed(4)}` : "";
+      compareMetricsA.textContent = accA + extraA;
+      compareMetricsB.textContent = accB + extraB;
+    }
+
+    document.querySelectorAll(".tab").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".tab").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        const tab = btn.getAttribute("data-tab");
+        document.getElementById("tab-predict").classList.toggle("hidden", tab !== "predict");
+        document.getElementById("tab-compare").classList.toggle("hidden", tab !== "compare");
+      });
+    });
+
+    leagueSelect.addEventListener("change", async () => {
+      const league = leagueSelect.value;
+      await loadStandings(league);
+      await loadTeams(league);
+    });
+
+    predictBtn.addEventListener("click", predict);
+    compareBtn.addEventListener("click", compareModels);
+
+    (async function init() {
+      const league = leagueSelect.value;
+      await loadStandings(league);
+      await loadTeams(league);
+      await loadModels();
+    })();
+  </script>
+</body>
+</html>
