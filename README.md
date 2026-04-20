@@ -1,7 +1,8 @@
 # Futbol Predictor
 
 Aplicacion web + API construida con FastAPI para predecir resultados de partidos de futbol (H/D/A) usando features de ELO, forma reciente y modelos de machine learning.
-
+![Visual](Principal.png)
+![Visual](Secundaria.png)
 ## Caracteristicas
 
 - Interfaz web para seleccionar liga, equipos y modelo.
